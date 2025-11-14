@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工程照片報告產生器</title>
+    
+    <!-- 載入Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 載入 SheetJS (xlsx.js) 函式庫，用於匯出 Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <!-- 
+      ==================================================================
+      應用程式樣式
+      ==================================================================
+    -->
+    <style>
+        /* 基本設定 */
+        body {
+            font-family: 'DFKai-SB', 'BiauKai', '標楷體', serif;
+            background-color: #f3f4f6; /* bg-gray-100 */
+        }
+        
+        /* 通用工具樣式 */
+        .hidden { display: none !important; }
+        .flex-active { display: flex; }
+
+        /* 應用程式主容器 */
+        #app-view {
+            transition: opacity 0.3s ease-in-out;
+        }
+
+        /* 訊息提示框 */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            color: white;
+            z-index: 100;
+            opacity: 0;
+            transform: translateX(100%);
+            transition: all 0.5s cubic-bezier(0.68, -0.55, 0.27, 1.55);
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+        .toast.success { background-color: #28a745; }
+        .toast.error   { background-color: #dc3545; }
+        .toast.warning { background-color: #ffc107; }
+
+        /* 檔案拖曳區域 */
+        #dropZone.dragging {
+            border-color: #2563eb; /* blue-600 */
+            background-color: #eff6ff; /* blue-50 */
+        }
+
+        /* 縮圖預覽 */
+        .thumbnail-container {
+            position: relative;
+            width: 100px;
+            height: 100px;
+        }
+        .thumbnail-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 0.375rem; /* rounded-md */
+            border: 1px solid #d1d5db; /* gray-300 */
+        }
+        .thumbnail-remove {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background-color: rgba(220, 53, 69, 0.9);
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            border: 1px solid white;
+        }
+
+        /* 資料登錄彈窗 */
+        #dataEntryModal {
+            background-color: rgba(0, 0, 0, 0.6); /* 半透明背景 */
+        }
+
+        /* ==================================================================
+        列印與報告樣式
+        ==================================================================
+        */
+
+        /* 報告A4預覽 (非列印時) */
+        .report-page {
+            width: 21cm;
+            min-height: 29.7cm;
+            padding: 1cm;
+            margin: 1rem auto;
+            border: 1px solid #ccc;
+            background: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            color: #000;
+            position: relative;
+        }
+        
+        /* 統一報告框線顏色 */
+        .report-page table,
+        .report-page th,
+        .report-page td,
+        .report-page div {
+            border-color: #000;
+        }
+
+        /* --- 版型B 樣式 (唯一版型) --- */
+        .report-page .report-header-b {
+            position: relative;
+            z-index: 0;
+        }
+        .report-header-b .header-flex-b {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 1px solid #000;
+            padding-bottom: 0.25rem;
+        }
+        .report-header-b .header-center-b {
+            text-align: center;
+            flex-grow: 1; 
+        }
+        .report-header-b .header-right-b {
+            text-align: right;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .report-header-b h1 { /* 工程名稱 */
+            font-size: 1.5rem; /* 24px */
+            font-weight: 700;
+        }
+        .report-header-b h2 { /* 文件名稱 */
+            font-size: 1.25rem; /* 20px */
+            font-weight: 700;
+            margin-top: 0.5rem;
+        }
+
+        .report-table-b {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed; /* 確保表格固定寬度 */
+            border-top: 1px solid #000;
+            border-left: 1px solid #000;
+            border-right: 1px solid #000;
+            position: relative;
+            z-index: 20;
+        }
+
+        .report-block-b {
+            width: 100%;
+            border-bottom: 1px solid #000;
+            page-break-inside: avoid;
+        }
+        .report-block-b .photo-cell-b {
+            width: 70%;
+            height: 8cm;
+            padding: 0.5rem;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        .report-block-b .photo-cell-b img {
+            max-width: 100%;
+            max-height: 7.5cm;
+            object-fit: contain;
+        }
+        .report-block-b .info-cell-b {
+            width: 30%;
+            padding: 0.5rem 1rem;
+            vertical-align: middle;
+            text-align: left;
+            border-left: 1px solid #000;
+            font-size: 1rem; /* 16px */
+            word-break: break-all;
+            overflow-wrap: break-word;
+        }
+
+        .description-row-b {
+            border-bottom: 1px solid #000;
+        }
+        .report-block-b .description-row-b td {
+            padding: 0.5rem 1rem;
+            font-size: 1rem; /* 16px */
+            vertical-align: top;
+            min-height: 1.5cm; /* 最小高度 */
+            word-break: break-all;
+            overflow-wrap: break-word;
+            white-space: normal;
+        }
+        
+        /* ==================================================================
+        列印專用樣式
+        ==================================================================
+        */
+        @media print {
+            body > *:not(#reportView) {
+                display: none;
+            }
+            #reportView, .report-page {
+                display: block !important;
+                width: 21cm;
+                min-height: 0;
+                height: 29.7cm;
+                margin: 0;
+                padding: 1cm;
+                box-shadow: none;
+                border: none;
+            }
+            #reportControls {
+                display: none !important;
+            }
+            .report-page {
+                page-break-after: always;
+                overflow: hidden;
+            }
+            .report-page:last-child {
+                page-break-after: avoid;
+            }
+            body, html {
+                background-color: #ffffff;
+                font-family: 'DFKai-SB', 'BiauKai', '標楷體', serif;
+            }
+            .report-block-a, .report-block-b {
+                page-break-inside: avoid;
+            }
+            .report-page .report-block-b .photo-cell-b img {
+                max-width: 100%;
+                max-height: 7.5cm;
+                width: auto;
+                height: auto;
+                object-fit: contain;
+            }
+        }
+        
+        /* ==================================================================
+        按鈕樣式 (Tailwind @apply)
+        ==================================================================
+        */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            font-weight: 600;
+            transition: all 0.2s ease-in-out;
+            border: 1px solid transparent;
+            cursor: pointer;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        }
+        .btn:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.4);
+        }
+        .btn-primary {
+            background-color: #2563eb; /* bg-blue-600 */
+            color: white;
+        }
+        .btn-primary:hover {
+            background-color: #1d4ed8; /* bg-blue-700 */
+        }
+        .btn-secondary {
+            background-color: #e5e7eb; /* bg-gray-200 */
+            color: #1f2937; /* text-gray-800 */
+            border-color: #d1d5db; /* border-gray-300 */
+        }
+        .btn-secondary:hover {
+            background-color: #d1d5db; /* bg-gray-300 */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-4 md:p-8">
+
+    <!-- 
+      ==================================================================
+      HTML 結構
+      ==================================================================
+    -->
+
+    <!-- 訊息提示框 (由 JS 控制) -->
+    <div id="toast" class="toast"></div>
+
+    <!-- 步驟一：設定畫面 -->
+    <div id="setupView" class="w-full max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-md">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 border-b pb-4">工程照片報告產生器</h1>
+
+        <!-- 基本設定 -->
+        <div class="space-y-4 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label for="projectName" class="block text-sm font-medium text-gray-700 mb-1">工程名稱</label>
+                    <input type="text" id="projectName" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value="麥寮鄉十八棟排水(許厝寮段後安寮小段1627地號旁)復建工程等二件">
+                </div>
+                <div>
+                    <label for="companyName" class="block text-sm font-medium text-gray-700 mb-1">單位名稱</label>
+                    <input type="text" id="companyName" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value="睿泰工程顧問有限公司">
+                </div>
+            </div>
+
+            <!-- 報告版型選擇 (移除) -->
+            <!-- 版型B 專用欄位 (恆定顯示) -->
+            <div>
+                <label for="reportNumber" class="block text-sm font-medium text-gray-700 mb-1">編號</label>
+                <input type="text" id="reportNumber" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="例如: 001">
+            </div>
+
+            <!-- 版型A 專用欄位 (移除) -->
+        </div>
+
+        <!-- 檔案上傳 -->
+        <div class="mb-6">
+            <label class="block text-sm font-medium text-gray-700 mb-2">上傳照片 (可多選或拖曳)</label>
+            <input type="file" id="fileInput" multiple accept="image/jpeg, image/png, image/jpg" class="hidden">
+            <div id="dropZone" class="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed border-gray-300 rounded-md cursor-pointer bg-gray-50 hover:bg-gray-100 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                </svg>
+                <p class="mt-2 text-sm text-gray-600">點擊此處上傳，或將檔案拖曳至此</p>
+                <p class="text-xs text-gray-500">僅接受 JPG, PNG 檔案</p>
+            </div>
+        </div>
+
+        <!-- 圖片預覽區 -->
+        <div id="previewContainer" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-4">
+            <!-- 縮圖會顯示在這裡 -->
+        </div>
+
+        <!-- 動作按鈕 -->
+        <div class="mt-8 pt-6 border-t flex justify-end">
+            <button id="startEntryButton" class="px-6 py-3 bg-blue-600 text-white font-bold rounded-md shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
+                開始登錄資料
+                <svg xmlns="http://www.w3.org/2000/svg" class="inline h-5 w-5 ml-1" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L12.586 11H5a1 1 0 110-2h7.586l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- 步驟二：資料登錄 Modal -->
+    <div id="dataEntryModal" class="hidden fixed inset-0 z-50 overflow-auto flex-active items-center justify-center p-4">
+        <div class="bg-white w-full max-w-6xl rounded-lg shadow-xl overflow-hidden" role="dialog" aria-modal="true">
+            <div class="p-6">
+                <h2 class="text-2xl font-bold text-gray-800">登錄照片資料</h2>
+                <p class="text-gray-600">請逐一為照片填寫資訊 (<span id="currentPhotoIndex">1</span> / <span id="totalPhotoCount">0</span>)</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 max-h-[70vh] overflow-y-auto">
+                <!-- 左側：表單 -->
+                <div class="space-y-4">
+                    <div>
+                        <label for="photoDate" class="block text-sm font-medium text-gray-700 mb-1">日期</label>
+                        <input type="date" id="photoDate" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label for="photoLocation" class="block text-sm font-medium text-gray-700 mb-1">照片拍攝位置</label>
+                        <input type="text" id="photoLocation" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label for="photoDescription" class="block text-sm font-medium text-gray-700 mb-1">說明</label>
+                        <textarea id="photoDescription" rows="3" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                    </div>
+                    <div>
+                        <label for="photoCategory" class="block text-sm font-medium text-gray-700 mb-1">分類 (Excel匯出用)</label>
+                        <select id="photoCategory" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                            <option>分類A</option>
+                            <option>分類B</option>
+                            <option>分類C</option>
+                            <option>其他</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="photoRemarks" class="block text-sm font-medium text-gray-700 mb-1">備註 (Excel匯出用)</label>
+                        <textarea id="photoRemarks" rows="2" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+                    </div>
+                </div>
+
+                <!-- 右側：照片預覽 -->
+                <div class="flex items-center justify-center bg-gray-100 rounded-md p-4">
+                    <img id="modalPreviewImage" src="https://placehold.co/600x400/eeeeee/aaaaaa?text=Photo" alt="照片預覽" class="max-w-full max-h-[50vh] object-contain rounded">
+                </div>
+            </div>
+
+            <!-- Modal 導航 -->
+            <div class="bg-gray-50 p-6 flex justify-between items-center">
+                <button id="modalCloseButton" class="btn btn-secondary">
+                    關閉
+                </button>
+                <div class="flex items-center space-x-4">
+                    <button id="prevPhotoButton" class="btn btn-secondary disabled:opacity-50 disabled:cursor-not-allowed">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline mr-1" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M12.707 15.293a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 1.414L9.414 10l3.293 3.293a1 1 0 010 1.414z" clip-rule="evenodd" />
+                        </svg>
+                        上一張
+                    </button>
+                    <button id="nextPhotoButton" class="btn btn-secondary disabled:opacity-50 disabled:cursor-not-allowed">
+                        下一張
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline ml-1" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                </div>
+                <button id="generateReportButton" class="btn btn-primary bg-green-600 hover:bg-green-700 focus:ring-green-500">
+                    完成並產生報告
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline ml-1" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- 步驟三：報告預覽畫面 -->
+    <div id="reportView" class="hidden">
+        
+        <!-- 報告控制項 -->
+        <div id="reportControls" class="w-full max-w-4xl mx-auto mb-6 p-4 bg-white rounded-lg shadow-md flex justify-between items-center">
+            <button id="backToEditingButton" class="btn btn-secondary">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" />
+                </svg>
+                返回編輯
+            </button>
+            <h2 class="text-2xl font-bold text-gray-800">報告預覽</h2>
+            
+            <div class="flex items-center gap-4">
+                <button id="exportExcelButton" class="btn btn-secondary">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M3 14h18M4 18h16M4 6h16M3 6a2 2 0 012-2h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6z" />
+                    </svg>
+                    匯出 Excel (僅資料)
+                </button>
+                <button id="printButton" class="btn btn-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v6a2 2 0 002 2h1v-4a1 1 0 011-1h8a1 1 0 011 1v4h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a2 2 0 00-2-2H7a2 2 0 00-2 2zm8 0H7v3h6V4zm0 8H7v4h6v-4z" clip-rule="evenodd" />
+                    </svg>
+                    列印 / 另存PDF
+                </button>
+            </div>
+        </div>
+
+        <!-- 報告內容容器 -->
+        <div id="reportContainer">
+            <!-- A4 頁面將由 JS 動態產生於此 -->
+        </div>
+    </div>
+
+
+    <!-- 
+      ==================================================================
+      JavaScript 程式碼
+      ==================================================================
+    -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- 
+            // 應用程式狀態管理
+            // --- 
+            const appState = {
+                photos: [], // 儲存 { file, url, date, location, description, category, remarks }
+                projectInfo: {
+                    projectName: '',
+                    companyName: '',
+                    reportNumber: ''
+                },
+                currentPhotoIndex: 0,
+                toastTimer: null
+            };
+
+            // --- 
+            // DOM 元素快取 (集中管理)
+            // --- 
+            const DOM = {
+                // 提示框
+                toast: document.getElementById('toast'),
+                
+                // 步驟一：設定
+                setupView: document.getElementById('setupView'),
+                projectName: document.getElementById('projectName'),
+                companyName: document.getElementById('companyName'),
+                reportNumber: document.getElementById('reportNumber'),
+                dropZone: document.getElementById('dropZone'),
+                fileInput: document.getElementById('fileInput'),
+                previewContainer: document.getElementById('previewContainer'),
+                startEntryButton: document.getElementById('startEntryButton'),
+                
+                // 步驟二：登錄
+                dataEntryModal: document.getElementById('dataEntryModal'),
+                modalCloseButton: document.getElementById('modalCloseButton'),
+                currentPhotoIndex: document.getElementById('currentPhotoIndex'),
+                totalPhotoCount: document.getElementById('totalPhotoCount'),
+                prevButton: document.getElementById('prevPhotoButton'),
+                nextButton: document.getElementById('nextPhotoButton'),
+                generateReportButton: document.getElementById('generateReportButton'),
+                modalPreviewImage: document.getElementById('modalPreviewImage'),
+                photoDate: document.getElementById('photoDate'),
+                photoLocation: document.getElementById('photoLocation'),
+                photoDescription: document.getElementById('photoDescription'),
+                photoCategory: document.getElementById('photoCategory'),
+                photoRemarks: document.getElementById('photoRemarks'),
+                
+                // 步驟三：報告
+                reportView: document.getElementById('reportView'),
+                reportControls: document.getElementById('reportControls'),
+                backToEditingButton: document.getElementById('backToEditingButton'),
+                printButton: document.getElementById('printButton'),
+                exportExcelButton: document.getElementById('exportExcelButton'),
+                reportContainer: document.getElementById('reportContainer')
+            };
+
+            // --- 
+            // 核心功能：畫面切換與提示
+            // --- 
+
+            /**
+             * 切換顯示的視圖
+             * @param {'setup' | 'dataEntry' | 'report'} viewName 
+             */
+            function showView(viewName) {
+                // 隱藏所有
+                DOM.setupView.classList.add('hidden');
+                DOM.dataEntryModal.classList.remove('flex-active');
+                DOM.dataEntryModal.classList.add('hidden');
+                DOM.reportView.classList.add('hidden');
+
+                // 顯示目標
+                if (viewName === 'setup') {
+                    DOM.setupView.classList.remove('hidden');
+                } else if (viewName === 'dataEntry') {
+                    DOM.dataEntryModal.classList.remove('hidden');
+                    DOM.dataEntryModal.classList.add('flex-active');
+                    loadPhotoDataToModal(appState.currentPhotoIndex);
+                } else if (viewName === 'report') {
+                    DOM.reportView.classList.remove('hidden');
+                    generateReport(); // 產生報告
+                }
+            }
+
+            /**
+             * 顯示訊息提示框
+             * @param {string} message - 顯示的訊息
+             * @param {'success' | 'error' | 'warning'} type - 提示類型
+             * @param {number} duration - 顯示時間 (毫秒)
+             */
+            function showMessage(message, type = 'success', duration = 3000) {
+                clearTimeout(appState.toastTimer);
+                DOM.toast.textContent = message;
+                DOM.toast.className = `toast ${type}`; // 移除 show
+                
+                setTimeout(() => {
+                    DOM.toast.classList.add('show');
+                }, 10); // 延遲以觸發動畫
+
+                appState.toastTimer = setTimeout(() => {
+                    DOM.toast.classList.remove('show');
+                }, duration);
+            }
+
+            // --- 
+            // 步驟一：設定畫面 (檔案處理)
+            // --- 
+
+            /**
+             * 處理傳入的檔案
+             * @param {FileList} files - 來自 input 或拖曳的檔案
+             */
+            function handleFiles(files) {
+                const imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
+                if (imageFiles.length === 0) {
+                    showMessage('未選取任何圖片檔案', 'warning');
+                    return;
+                }
+
+                let addedCount = 0;
+                for (const file of imageFiles) {
+                    // 避免重複加入
+                    if (!appState.photos.some(p => p.file.name === file.name && p.file.size === file.size)) {
+                        const photoData = {
+                            file: file,
+                            url: URL.createObjectURL(file),
+                            date: getTodayDate(), // 預設今天
+                            location: '',
+                            description: '',
+                            category: '分類A',
+                            remarks: ''
+                        };
+                        appState.photos.push(photoData);
+                        addedCount++;
+                    }
+                }
+                
+                if (addedCount > 0) {
+                    updatePreviewContainer();
+                    updateStartButton();
+                    showMessage(`已加入 ${addedCount} 張照片`, 'success');
+                } else {
+                    showMessage(`選取的照片已存在`, 'warning');
+                }
+            }
+
+            /** 更新縮圖預覽區域 */
+            function updatePreviewContainer() {
+                DOM.previewContainer.innerHTML = ''; // 清空
+                appState.photos.forEach((photo, index) => {
+                    const container = document.createElement('div');
+                    container.className = 'thumbnail-container';
+
+                    const img = document.createElement('img');
+                    img.src = photo.url;
+                    img.className = 'thumbnail-image';
+                    
+                    const removeBtn = document.createElement('button');
+                    removeBtn.className = 'thumbnail-remove';
+                    removeBtn.innerHTML = '&times;';
+                    removeBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        removePhoto(index);
+                    };
+
+                    container.appendChild(img);
+                    container.appendChild(removeBtn);
+                    DOM.previewContainer.appendChild(container);
+                });
+            }
+
+            /**
+             * 移除指定索引的照片
+             * @param {number} index - 要移除的照片索引
+             */
+            function removePhoto(index) {
+                const removedPhoto = appState.photos.splice(index, 1)[0];
+                if (removedPhoto) {
+                    URL.revokeObjectURL(removedPhoto.url); // 釋放記憶體
+                    updatePreviewContainer();
+                    updateStartButton();
+                    showMessage(`已移除照片: ${removedPhoto.file.name}`, 'warning');
+                }
+            }
+
+            /** 更新 "開始" 按鈕的啟用狀態 */
+            function updateStartButton() {
+                DOM.startEntryButton.disabled = appState.photos.length === 0;
+            }
+
+            /** 取得今天日期 (YYYY-MM-DD) */
+            function getTodayDate() {
+                return new Date().toISOString().split('T')[0];
+            }
+
+            // --- 
+            // 步驟二：資料登錄 (Modal)
+            // --- 
+
+            /**
+             * 載入指定索引的照片資料到 Modal
+             * @param {number} index - 照片索引
+             */
+            function loadPhotoDataToModal(index) {
+                if (index < 0 || index >= appState.photos.length) return;
+
+                const photoData = appState.photos[index];
+                appState.currentPhotoIndex = index;
+
+                DOM.modalPreviewImage.src = photoData.url;
+                DOM.photoDate.value = photoData.date;
+                DOM.photoLocation.value = photoData.location;
+                DOM.photoDescription.value = photoData.description;
+                DOM.photoCategory.value = photoData.category;
+                DOM.photoRemarks.value = photoData.remarks;
+
+                DOM.currentPhotoIndex.textContent = index + 1;
+                DOM.totalPhotoCount.textContent = appState.photos.length;
+
+                DOM.prevButton.disabled = (index === 0);
+                DOM.nextButton.disabled = (index === appState.photos.length - 1);
+            }
+
+            /** 儲存目前 Modal 中的資料到 appState */
+            function saveModalData() {
+                if (appState.currentPhotoIndex < 0 || appState.currentPhotoIndex >= appState.photos.length) return;
+
+                const photoData = appState.photos[appState.currentPhotoIndex];
+                photoData.date = DOM.photoDate.value;
+                photoData.location = DOM.photoLocation.value;
+                photoData.description = DOM.photoDescription.value;
+                photoData.category = DOM.photoCategory.value;
+                photoData.remarks = DOM.photoRemarks.value;
+            }
+
+            // --- 
+            // 步驟三：報告產生
+            // --- 
+
+            /** 根據選擇的版型產生報告 */
+            function generateReport() {
+                DOM.reportContainer.innerHTML = ''; // 清空舊報告
+                generateReportB(); // 永遠產生版型B
+            }
+
+            // --- 版型B 產生器 ---
+            function generateReportB() {
+                const photosPerPage = 3;
+                const totalPhotos = appState.photos.length;
+                const totalPages = totalPhotos === 0 ? 1 : Math.ceil(totalPhotos / photosPerPage);
+                
+                for (let i = 0; i < totalPages; i++) {
+                    const page = createPageB(i + 1);
+                    const tbody = document.createElement('tbody');
+                    
+                    const photosOnPage = appState.photos.slice(
+                        i * photosPerPage,
+                        (i + 1) * photosPerPage
+                    );
+                    
+                    photosOnPage.forEach(photo => {
+                        const block = createPhotoBlockB(photo); // 這裡回傳的是 2個 <tr>
+                        tbody.appendChild(block);
+                    });
+
+                    const emptySlots = photosPerPage - photosOnPage.length;
+                    for (let j = 0; j < emptySlots; j++) {
+                        tbody.appendChild(createEmptyBlockB());
+                    }
+                    
+                    page.querySelector('.report-table-b').appendChild(tbody);
+                    DOM.reportContainer.appendChild(page);
+                }
+            }
+
+            /** 建立版型B的頁面 (含頁首) */
+            function createPageB(currentPage) {
+                const page = document.createElement('div');
+                page.className = 'report-page';
+                
+                const header = document.createElement('div');
+                header.className = 'report-header-b';
+                
+                // 移除 page-number-b (浮水印)
+                header.innerHTML = `
+                    <div class="header-flex-b">
+                        <div style="width: 100px;"></div> <!-- 左側空白佔位 -->
+                        <div class="header-center-b">
+                            <h1>${appState.projectInfo.projectName}</h1>
+                            <h2>施工/材料抽查照片</h2>
+                        </div>
+                        <div class="header-right-b" style="width: 100px;">
+                            <span>編號：${appState.projectInfo.reportNumber || ''}</span>
+                        </div>
+                    </div>
+                `;
+                page.appendChild(header);
+
+                const table = document.createElement('table');
+                table.className = 'report-table-b';
+                page.appendChild(table);
+                
+                return page;
+            }
+
+            /** 建立版型B的照片區塊 (安全, 回傳 Fragment) */
+            function createPhotoBlockB(photo) {
+                const fragment = document.createDocumentFragment();
+                
+                // 1. 照片列
+                const row = document.createElement('tr');
+                row.className = 'report-block-b';
+                
+                const photoCell = document.createElement('td');
+                photoCell.className = 'photo-cell-b';
+                photoCell.innerHTML = `<img src="${photo.url}" alt="照片">`;
+                row.appendChild(photoCell);
+
+                const infoCell = document.createElement('td');
+                infoCell.className = 'info-cell-b';
+                
+                const locationText = document.createElement('p');
+                locationText.innerHTML = `<strong>照片拍攝位置：</strong><br>`;
+                locationText.appendChild(document.createTextNode(photo.location || ' ')); // 安全
+                
+                const timeText = document.createElement('p');
+                timeText.style.marginTop = '1rem';
+                timeText.innerHTML = `<strong>照片拍攝時間：</strong><br>`;
+                timeText.appendChild(document.createTextNode(formatDateToROC(photo.date) || ' ')); // 安全
+                
+                infoCell.appendChild(locationText);
+                infoCell.appendChild(timeText);
+                row.appendChild(infoCell);
+                
+                fragment.appendChild(row);
+
+                // 2. 說明列
+                const descRow = document.createElement('tr');
+                descRow.className = 'description-row-b';
+                
+                const descTd = document.createElement('td');
+                descTd.colSpan = 2;
+                descTd.textContent = `說明：${photo.description || ''}`; // 安全
+                
+                descRow.appendChild(descTd);
+                fragment.appendChild(descRow);
+                
+                return fragment;
+            }
+
+            /** 建立版型B的空白區塊 (回傳 Fragment) */
+            function createEmptyBlockB() {
+                const fragment = document.createDocumentFragment();
+
+                const emptyRow = document.createElement('tr');
+                emptyRow.className = 'report-block-b';
+                emptyRow.innerHTML = `
+                    <td class="photo-cell-b">&nbsp;</td>
+                    <td class="info-cell-b">
+                        <p><strong>照片拍攝位置：</strong><br>&nbsp;</p>
+                        <p style="margin-top: 1rem;"><strong>照片拍攝時間：</strong><br>&nbsp;</p>
+                    </td>`;
+                fragment.appendChild(emptyRow);
+
+                const emptyDescRow = document.createElement('tr');
+                emptyDescRow.className = 'description-row-b';
+                emptyDescRow.innerHTML = `<td colspan="2">說明：</td>`;
+                fragment.appendChild(emptyDescRow);
+                
+                return fragment;
+            }
+            
+            /** 轉換日期為民國年 (e.g., 1141013) */
+            function formatDateToROC(dateString) {
+                if (!dateString) return '';
+                try {
+                    const date = new Date(dateString);
+                    const year = date.getFullYear() - 1911;
+                    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                    const day = date.getDate().toString().padStart(2, '0');
+                    return `${year}${month}${day}`;
+                } catch (e) {
+                    return dateString;
+                }
+            }
+
+            // --- 
+            // 步驟三：報告控制 (匯出/列印)
+            // --- 
+
+            /** 匯出 Excel (僅資料) */
+            function exportDataToExcel() {
+                if (appState.photos.length === 0) {
+                    showMessage('沒有資料可匯出', 'error');
+                    return;
+                }
+
+                try {
+                    // 簡化匯出資料的欄位名稱
+                    const dataToExport = appState.photos.map((p, index) => ({
+                        '序號': index + 1,
+                        '檔案名稱': p.file.name,
+                        '日期': p.date,
+                        '照片拍攝位置': p.location,
+                        '說明': p.description,
+                        '分類': p.category,
+                        '備註': p.remarks
+                    }));
+
+                    const ws = XLSX.utils.json_to_sheet(dataToExport);
+                    
+                    ws['!cols'] = [
+                        { wch: 5 },  // 序號
+                        { wch: 30 }, // 檔案名稱
+                        { wch: 12 }, // 日期
+                        { wch: 40 }, // 位置
+                        { wch: 40 }, // 說明
+                        { wch: 15 }, // 分類
+                        { wch: 30 }  // 備註
+                    ];
+
+                    const wb = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(wb, ws, '照片資料');
+
+                    const projName = appState.projectInfo.projectName || '報告';
+                    const filename = `工程照片資料_${projName.substring(0, 20)}.xlsx`;
+                    XLSX.writeFile(wb, filename);
+                    
+                    showMessage('Excel 資料匯出成功！', 'success');
+
+                } catch (error) {
+                    console.error('Excel export failed:', error);
+                    showMessage('Excel 匯出失敗', 'error');
+                }
+            }
+
+            // --- 
+            // 事件監聽器 (綁定)
+            // --- 
+
+            // 步驟一：
+            DOM.dropZone.addEventListener('click', () => DOM.fileInput.click());
+            DOM.fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+            DOM.dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                DOM.dropZone.classList.add('dragging');
+            });
+            DOM.dropZone.addEventListener('dragleave', () => DOM.dropZone.classList.remove('dragging'));
+            DOM.dropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                DOM.dropZone.classList.remove('dragging');
+                handleFiles(e.dataTransfer.files);
+            });
+            DOM.startEntryButton.addEventListener('click', () => {
+                // 儲存設定
+                appState.projectInfo.projectName = DOM.projectName.value;
+                appState.projectInfo.companyName = DOM.companyName.value;
+                appState.projectInfo.reportNumber = DOM.reportNumber.value;
+                
+                appState.currentPhotoIndex = 0;
+                showView('dataEntry');
+            });
+            
+            // 步驟二：
+            DOM.modalCloseButton.addEventListener('click', () => {
+                saveModalData();
+                showView('setup');
+            });
+            DOM.prevButton.addEventListener('click', () => {
+                saveModalData();
+                if (appState.currentPhotoIndex > 0) {
+                    loadPhotoDataToModal(appState.currentPhotoIndex - 1);
+                }
+            });
+            DOM.nextButton.addEventListener('click', () => {
+                saveModalData();
+                if (appState.currentPhotoIndex < appState.photos.length - 1) {
+                    loadPhotoDataToModal(appState.currentPhotoIndex + 1);
+                }
+            });
+            DOM.generateReportButton.addEventListener('click', () => {
+                saveModalData();
+                showView('report');
+                showMessage('報告已成功產生！', 'success');
+            });
+
+            // 步驟三：
+            DOM.backToEditingButton.addEventListener('click', () => showView('setup'));
+            DOM.printButton.addEventListener('click', () => window.print());
+            DOM.exportExcelButton.addEventListener('click', exportDataToExcel);
+
+            // --- 
+            // 應用程式初始化
+            // --- 
+            function initializeApp() {
+                showView('setup');
+                DOM.photoDate.value = getTodayDate(); // 預設日期
+            }
+            
+            initializeApp(); // 執行初始化
+
+        });
+    </script>
+</body>
+</html>
